@@ -1,0 +1,313 @@
+---
+title: "Anime Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r importchunk}
+tidy_anime <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-04-23/tidy_anime.csv")
+anime <- tidy_anime #just making a copy so I don't have to keep resetting 
+```
+
+Alrighty lets see what this anime shizzle is all about. I'm very excited to be looking at this, being the huge anime nerd that I am.  From looking at it we can see some duplicates?
+
+```{r libraries}
+library(tidyverse)
+library(DataExplorer)
+library(lubridate)
+```
+
+Anime is duplicated by the different genres it belonds to (which isn't necessarily a bad way of doing it we should figure out how this works)
+
+## Features
+
+We will be coming back to this section to clean parts of the data.
+
+```{r feature engineering}
+anime$animeID <- as.factor(anime$animeID) #its a factor not a numeric
+anime$studio <- as.factor(anime$studio)
+anime$genre <-  as.factor(anime$genre)
+anime <- as_tibble(anime)
+```
+
+
+## EDA
+
+Gonna fire up some quick data explorere stuff just to get a 
+```{r data explorating}
+str(anime)
+plot_intro(anime)
+plot_bar(anime)
+plot_histogram(anime)
+plot_qq(anime)
+```
+
+There is a total of 13631 unique anime ID's in the database. 504 different unique studios.
+
+### Questions to be asked:
+
+#### What studios have made the most anime?
+
+```{r}
+#removing the ones with NA
+anime %>%
+  group_by(studio) %>%
+  summarise(animenumber = n_distinct(animeID)) %>%
+  na.omit(studio) %>%
+  arrange(desc(animenumber))
+```
+
+#### What's the most highly rated studio?
+
+```{r}
+anime %>%
+  group_by(studio) %>%
+  summarise(mean_score = mean(score),
+            median_score = median(score),
+            animenumber = n_distinct(animeID),
+            StudioPop = mean(popularity),
+            StudioRank = mean(rank)) %>%
+  na.omit(studio) %>%
+  arrange(desc(mean_score))
+```
+
+#### What's the most popular studio?
+
+```{r}
+anime %>%
+  group_by(studio) %>%
+  summarise(mean_score = mean(score),
+            median_score = median(score),
+            animenumber = n_distinct(animeID),
+            StudioPop = median(popularity),
+            StudioRank = median(rank)) %>%
+  na.omit(studio) %>%
+  filter(animenumber >= 20) %>% #want to make sure we take out the outliers with very little anime
+  arrange(StudioPop)
+```
+
+Looking like david production coming in clutch. It's hard to rank the other studios due to the different anime they make. This kind of ranking uses their median which should be less skewed by outliers. Wit studio makes the ever popular attack on titan series so it makes sense that it has the highest median popularity. 
+
+Whats the correlation between episode count and popularity?
+
+Lets do a quick plot to get what the shape looks like
+```{r}
+colnames(anime) #ignore movies and 1 episode ova
+anime %>%
+  filter(episodes < 100 & episodes != 1) %>%
+  ggplot() +
+  geom_point(aes(x = popularity, y = episodes), alpha = 0.1) +
+  geom_smooth(aes(x = popularity, y =  episodes))
+    
+```
+
+```{r}
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+blep <- function() {
+  blep <- anime %>%
+    filter(episodes != 1)
+  getmode(blep$episodes)
+}
+blep()
+
+#lets find most common counts 
+episode_counts <- anime %>%
+  select(episodes) %>%
+  group_by(episodes) %>%
+  summarise(totals = n()) %>%
+  arrange(desc(totals))
+ggplot(episode_counts %>% head(15L)) +
+  geom_bar(stat = "identity", aes(x = episodes, y = totals)) + 
+  geom_label(aes(x = episodes, y = 0, label = episodes))
+anime %>%
+  filter(episodes < 50 & episodes != 1) %>%
+  ggplot() +
+  geom_histogram(aes(episodes), bins = 20)
+  
+```
+Most common non movie or ova count is 12.
+
+```{r}
+ggplot(data = anime %>% filter(episodes != 1 & episodes < 100)) + 
+  geom_bin2d(aes(x = episodes, y = popularity))
+```
+
+From this graph we can see that there are pockets of popularity with in the 13 episoders and the 24 episoders, these are some of the most common formats in the anime industry. Although from my graphs I can't really see any other correlation besides that it is more common to have anime that are at these numbers. May have to normalize the distribution.
+
+#### What does year have to do with popularity?
+
+```{r}
+# lets explore this with ggplot
+ggplot(data = anime) +
+  geom_point(aes(x = start_date, y = popularity))
+# lets group it together to get an average
+anime %>%
+  mutate(StartYear = floor_date(start_date, "year")) %>%
+  group_by(StartYear) %>%
+  summarize(MedianPOP = median(popularity, na.rm = TRUE),
+            MeanPOP = mean(popularity, na.rm = TRUE)) %>%
+  gather("type", "stats", -StartYear) %>%
+  filter(StartYear > 1990) %>%
+  ggplot()+
+  geom_line(aes(x = StartYear, y = stats, col = type)) +
+  scale_y_reverse() +
+  ggtitle("Anime Popularity over the Years")
+  
+```
+
+Seems like the golden time of anime was around the mid 2000's until recently. Most of the anime favorites seem to come from this point and time. I used mean and median to illustrate just to make sure I wasn't getting a fully skewed point of view. What is concerning is this sudden fall off of popularity in the modern anime spectrum, did these anime do worse or have they not had enough time to hit the top ranks?
+
+Lets compare this to the ratings of these anime as opposed to just popularity, as this might disclude the more niche anime we see:
+
+```{r}
+anime %>%
+  mutate(StartYear = floor_date(start_date, "year")) %>%
+  group_by(StartYear) %>%
+  summarize(MedianSCORE = median(score, na.rm = TRUE),
+            MeanScore = mean(score, na.rm = TRUE)) %>%
+  gather("Type", "Score", -1) %>%
+  filter(StartYear > 1990) %>%
+  ggplot()+
+  geom_line(aes(x = StartYear, y = Score, col = Type), alpha = 0.8) +
+  ggtitle("Anime rating over the Years")
+```
+I wanted to keep the most relevant anime of the past 30 years. This is due to the modern definition of anime only really started to take off around the 1990's. What I want to see is what causes this from the rise of anime in about 2012 to the spike downwards we see in recent times. Note the spike in ratings for the current season of anime. I can only conjecture these ratings may lower or raise as they can be inflated when the seasons are not fully reviewed yet.
+
+Lets see if many people have reviewed the current season compared to average:
+
+```{r}
+anime %>%
+  mutate(season = floor_date(start_date, "season")) %>%
+  group_by(season) %>%
+  summarize(MeanScored = mean(scored_by, na.rm = TRUE),
+            MedianScored = median(scored_by, na.rm = TRUE)) %>%
+  gather("Type", "Score", -1) %>%
+  filter(season > 1990) %>%
+  arrange(desc(season)) %>%
+  ggplot() +
+  geom_line(aes(x = season, y = Score, col = Type))
+```
+So as you can see there are a small amount of reviews for this current season so that could explain the high spike as people see the first few episodes of the season (usually very positive) and as it goes on more people who have finished will add in their final reviews of the season. This is usually because the first few episodes can be the best the studio puts out during the season and as it goes on they have to manage the budget and the story.
+
+
+Top Anime studio each year?
+
+#### Whats the major trend in genre for anime?
+
+This is very important to see what exactly is affecting this downward trend in modern seasonal anime. Lets look at how genre has changed over these past few years.
+
+```{r}
+anime %>%
+  mutate(StartYear = floor_date(start_date, "year")) %>%
+  filter(StartYear > 1990-01-01) %>%
+  group_by(StartYear, genre) %>%
+  summarize(genre_number = n()) %>%
+  top_n(1) %>%
+  ggplot() +
+  geom_point(aes(x = StartYear, y = genre_number, col = genre))
+```
+
+
+What times of the year give way to popular animes?
+
+If an anime has alot of favorites, does it correlate with being highly popular or highly rated?
+
+When are anime generally broadcasted?
+
+Maybe a sentiment analysis of the descriptions??
+
+Most popular genre combinations?
+
+```{r}
+fct_count(anime$genre) %>%
+  arrange(desc(n)) %>%
+  ggplot() +
+  geom_bar(aes(x = f, y = n), stat = "identity") +
+  coord_flip()
+```
+
+```{r}
+permute.items <- function(x) {
+  l <- length(x);
+  if (l == 1) return(matrix(x, 1, 1));
+
+  sub.permute <- permute.items(x[-length(x)]);
+  arrangements <- rep(sub.permute, each=l);
+  arrangements <- matrix(arrangements, nrow(sub.permute) * l, ncol(sub.permute) + 1);
+  i <- rep(1:nrow(sub.permute), each=l);
+  j <- rep(1:l, l);
+  insert <- ifelse(i %% 2 == 1, l - j + 1, j);
+
+  for (xx in 1:nrow(arrangements)) {
+    arrangements[xx, insert[xx]] <- x[l];
+    counter <- 1;
+    for (yy in 1:l) {
+      if (yy != insert[xx]) {
+        arrangements[xx, yy] <- sub.permute[i[xx], counter];
+        counter <- counter + 1;
+      }
+    }
+  }  
+  return(arrangements);
+}
+```
+
+
+```{r}
+library(data.table)
+indices <- as.numeric(as.character(anime$animeID))
+variables <- as.character(anime$genre)
+df <- data.table(indices, variables)
+setDT(df)
+
+#list will be generated for each group
+ll <- lapply(split(df, by="indices"), 
+             function(x)cbind(group_id = unique(x$indices), 
+                              expand.grid(x$variables, x$variables, stringsAsFactors = F)))
+
+#Combine data frames from list and then filter those with 
+# having same value for both columns
+bloper <- do.call("rbind", ll) %>% 
+  filter(Var1 != Var2)
+
+longset <- bloper %>%
+  group_by(Var1, Var2) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+toDelete <- seq(1, nrow(longset), 2)
+shortset <- longset[-toDelete,]
+head(shortset)
+```
+
+
+Other one in progress
+```{r}
+
+library(data.table)
+indices <- as.numeric(as.character(anime$animeID))
+variables <- as.character(anime$genre)
+df <- data.table(indices, variables)
+setDT(df)
+
+#list will be generated for each group
+ll <- lapply(split(df, by="indices"),
+             function(x)cbind(group_id = unique(x$indices),
+                              expand.grid(x$variables, x$variables, x$variables, stringsAsFactors = F)))
+
+#Combine data frames from list and then filter those with
+# having same value for both columns
+bloper <- do.call("rbind", ll) %>%
+  filter(Var1 != Var2 & Var1 != Var3 & Var2 != Var3)
+
+longset <- bloper %>%
+  group_by(Var1, Var2, Var3) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+toDelete <- seq(1, nrow(longset), 2)
+shortset <- longset[-toDelete,]
+```
+
